@@ -142,3 +142,69 @@ conda run -n wm811k python -m wafer_repro.train `
 
 Result: completed train, checkpoint save, and test evaluation with default
 scheduler and early-stopping settings.
+
+## 2026-05-18 - Phase 10 Sweep resume and skip-completed support
+
+Phase 10 added a resume-friendly sweep execution mode. A sweep can now skip
+trials whose output directory already contains `run_manifest.json` with
+`status: completed`, allowing interrupted or repeated sweeps to avoid rerunning
+finished trials.
+
+### Implementation scope
+
+- `src/wafer_repro/experiment/sweep.py`
+  - Added run-directory resolution from each trial config.
+  - Added run manifest loading.
+  - Added `skip_completed` support in `run_sweep`.
+  - Added `skipped_completed` trial status records.
+  - Added `summary` counts to `sweep_status.json`.
+- `src/wafer_repro/sweep.py`
+  - Added `--skip-completed`.
+- `configs/sweeps/wm811k_smoke_grid.yaml`
+  - Added explicit `execution.skip_completed: false` default.
+
+### Verification
+
+```powershell
+python -m py_compile `
+  src\wafer_repro\experiment\sweep.py `
+  src\wafer_repro\sweep.py
+```
+
+Result: passed.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m wafer_repro.sweep `
+  --config configs\sweeps\wm811k_smoke_grid.yaml `
+  --dry-run
+```
+
+Result: materialized two trial configs.
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.sweep `
+  --config configs\sweeps\wm811k_smoke_grid.yaml
+```
+
+Result: completed the two smoke trials and wrote completed run manifests.
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.sweep `
+  --config configs\sweeps\wm811k_smoke_grid.yaml `
+  --skip-completed
+```
+
+Result: skipped both existing completed trials. `sweep_status.json` summary:
+`total: 2`, `skipped_completed: 2`.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m wafer_repro.collect_results `
+  --runs-dir outputs\experiments\wm811k_smoke_grid `
+  --out outputs\experiments\wm811k_smoke_grid\comparison_phase10.csv
+```
+
+Result: collected two completed trials with `axis_preprocessing` preserved.

@@ -148,28 +148,95 @@ def write_trial_configs(sweep_path: str | Path, out_dir: str | Path | None = Non
     return suite_dir, trials
 
 
-def run_sweep(sweep_path: str | Path, dry_run: bool = False) -> Path:
+def _trial_run_dir(trial: TrialSpec) -> Path:
+    runtime = trial.config.get("runtime", {})
+    output_dir = runtime.get("output_dir")
+    run_name = runtime.get("run_name") or trial.name
+    if not output_dir:
+        raise ValueError(f"Trial {trial.name!r} does not define runtime.output_dir.")
+    return Path(output_dir) / run_name
+
+
+def _read_run_manifest(run_dir: Path) -> dict[str, Any] | None:
+    manifest_path = run_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        return None
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _status_summary(statuses: list[dict[str, Any]]) -> dict[str, int]:
+    summary: dict[str, int] = {"total": len(statuses)}
+    for status in statuses:
+        key = str(status["status"])
+        summary[key] = summary.get(key, 0) + 1
+    return summary
+
+
+def _write_sweep_status(suite_dir: Path, statuses: list[dict[str, Any]]) -> None:
+    write_json(
+        suite_dir / "sweep_status.json",
+        {
+            "summary": _status_summary(statuses),
+            "trials": statuses,
+        },
+    )
+
+
+def run_sweep(sweep_path: str | Path, dry_run: bool = False, skip_completed: bool | None = None) -> Path:
     sweep_path = Path(sweep_path)
     sweep_config = read_yaml(sweep_path)
     sweep = sweep_config["sweep"]
     suite_dir, trials = write_trial_configs(sweep_path)
     config_dir = suite_dir / "_trial_configs"
-    continue_on_error = bool(sweep.get("execution", {}).get("continue_on_error", False))
+    execution_config = sweep.get("execution", {})
+    continue_on_error = bool(execution_config.get("continue_on_error", False))
+    if skip_completed is None:
+        skip_completed = bool(execution_config.get("skip_completed", False))
 
     statuses = []
     for trial in trials:
         config_path = config_dir / f"{trial.name}.yaml"
+        run_dir = _trial_run_dir(trial)
+        run_manifest = _read_run_manifest(run_dir)
+        if skip_completed and run_manifest and run_manifest.get("status") == "completed":
+            status = {
+                "trial": trial.name,
+                "status": "skipped_completed",
+                "config": str(config_path),
+                "run_dir": str(run_dir),
+                "manifest": str(run_dir / "run_manifest.json"),
+                "config_hash": run_manifest.get("config_hash"),
+            }
+            print(f"Skipping completed trial: {trial.name} ({run_dir})", flush=True)
+            statuses.append(status)
+            _write_sweep_status(suite_dir, statuses)
+            continue
+
         command = [sys.executable, "-m", "wafer_repro.train", "--config", str(config_path)]
         print("Running:", " ".join(command), flush=True)
         if dry_run:
-            statuses.append({"trial": trial.name, "status": "dry_run", "config": str(config_path)})
+            statuses.append(
+                {
+                    "trial": trial.name,
+                    "status": "dry_run",
+                    "config": str(config_path),
+                    "run_dir": str(run_dir),
+                }
+            )
             continue
         result = subprocess.run(command)
         status = "completed" if result.returncode == 0 else "failed"
-        statuses.append({"trial": trial.name, "status": status, "returncode": result.returncode, "config": str(config_path)})
-        write_json(suite_dir / "sweep_status.json", {"trials": statuses})
+        statuses.append(
+            {
+                "trial": trial.name,
+                "status": status,
+                "returncode": result.returncode,
+                "config": str(config_path),
+                "run_dir": str(run_dir),
+            }
+        )
+        _write_sweep_status(suite_dir, statuses)
         if result.returncode != 0 and not continue_on_error:
             raise subprocess.CalledProcessError(result.returncode, command)
-    write_json(suite_dir / "sweep_status.json", {"trials": statuses})
+    _write_sweep_status(suite_dir, statuses)
     return suite_dir
-

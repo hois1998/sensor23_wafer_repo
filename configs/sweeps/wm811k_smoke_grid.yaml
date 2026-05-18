@@ -25,4 +25,4 @@ sweep:
 
   execution:
     continue_on_error: false
-
+    skip_completed: false
