@@ -23,6 +23,20 @@ CONFIG_ARG_MAP = {
     "train.optimizer.name": "optimizer",
     "train.optimizer.lr": "lr",
     "train.optimizer.weight_decay": "weight_decay",
+    "train.scheduler.name": "scheduler",
+    "train.scheduler.step_size": "scheduler_step_size",
+    "train.scheduler.gamma": "scheduler_gamma",
+    "train.scheduler.t_max": "scheduler_t_max",
+    "train.scheduler.eta_min": "scheduler_eta_min",
+    "train.scheduler.monitor": "scheduler_monitor",
+    "train.scheduler.mode": "scheduler_mode",
+    "train.scheduler.factor": "scheduler_factor",
+    "train.scheduler.patience": "scheduler_patience",
+    "train.early_stopping.enabled": "early_stopping",
+    "train.early_stopping.monitor": "early_stopping_monitor",
+    "train.early_stopping.mode": "early_stopping_mode",
+    "train.early_stopping.patience": "early_stopping_patience",
+    "train.early_stopping.min_delta": "early_stopping_min_delta",
     "data.split.strategy": "split_strategy",
     "data.split.test_size": "test_size",
     "data.split.val_fraction_of_trainval": "val_fraction_of_trainval",
@@ -76,6 +90,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--optimizer", choices=["adam", "adamw", "sgd"], default="adam")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=0.0)
+    parser.add_argument("--scheduler", choices=["none", "step_lr", "cosine_annealing", "reduce_on_plateau"], default="none")
+    parser.add_argument("--scheduler-step-size", type=int, default=10)
+    parser.add_argument("--scheduler-gamma", type=float, default=0.1)
+    parser.add_argument("--scheduler-t-max", type=int, default=None)
+    parser.add_argument("--scheduler-eta-min", type=float, default=0.0)
+    parser.add_argument("--scheduler-monitor", default="val/macro_f1")
+    parser.add_argument("--scheduler-mode", choices=["max", "min"], default="max")
+    parser.add_argument("--scheduler-factor", type=float, default=0.1)
+    parser.add_argument("--scheduler-patience", type=int, default=10)
+    parser.add_argument("--early-stopping", action="store_true", help="Stop when the monitored validation metric stops improving.")
+    parser.add_argument("--early-stopping-monitor", default="val/macro_f1")
+    parser.add_argument("--early-stopping-mode", choices=["max", "min"], default="max")
+    parser.add_argument("--early-stopping-patience", type=int, default=10)
+    parser.add_argument("--early-stopping-min-delta", type=float, default=0.0)
     parser.add_argument("--dropout", type=float, default=0.35)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--val-fraction-of-trainval", type=float, default=0.25)

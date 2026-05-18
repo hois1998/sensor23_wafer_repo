@@ -24,6 +24,13 @@ from wafer_repro.labels import PAPER_CLASSES
 from wafer_repro.metrics import predict_probabilities, save_evaluation
 from wafer_repro.models import create_model
 from wafer_repro.tasks.registry import create_task
+from wafer_repro.training.callbacks import (
+    build_early_stopper,
+    build_scheduler,
+    is_improvement,
+    resolve_monitor_value,
+    step_scheduler,
+)
 from wafer_repro.training.registry import create_trainer
 from wafer_repro.training.supervised import build_optimizer, cpu_state_dict, make_loader
 from wafer_repro.utils import amp_is_enabled, choose_device, ensure_dir, set_seed, timestamp, write_json
@@ -86,6 +93,20 @@ def build_resolved_config(args: argparse.Namespace, loaded_config: dict[str, Any
     set_path(resolved, "train.optimizer.name", args.optimizer)
     set_path(resolved, "train.optimizer.lr", args.lr)
     set_path(resolved, "train.optimizer.weight_decay", args.weight_decay)
+    set_path(resolved, "train.scheduler.name", args.scheduler)
+    set_path(resolved, "train.scheduler.step_size", args.scheduler_step_size)
+    set_path(resolved, "train.scheduler.gamma", args.scheduler_gamma)
+    set_path(resolved, "train.scheduler.t_max", args.scheduler_t_max)
+    set_path(resolved, "train.scheduler.eta_min", args.scheduler_eta_min)
+    set_path(resolved, "train.scheduler.monitor", args.scheduler_monitor)
+    set_path(resolved, "train.scheduler.mode", args.scheduler_mode)
+    set_path(resolved, "train.scheduler.factor", args.scheduler_factor)
+    set_path(resolved, "train.scheduler.patience", args.scheduler_patience)
+    set_path(resolved, "train.early_stopping.enabled", args.early_stopping)
+    set_path(resolved, "train.early_stopping.monitor", args.early_stopping_monitor)
+    set_path(resolved, "train.early_stopping.mode", args.early_stopping_mode)
+    set_path(resolved, "train.early_stopping.patience", args.early_stopping_patience)
+    set_path(resolved, "train.early_stopping.min_delta", args.early_stopping_min_delta)
     set_path(resolved, "train.amp.enabled", args.amp)
     set_path(resolved, "train.checkpoint.monitor", get_path(resolved, "train.checkpoint.monitor", default="val/macro_f1"))
     set_path(resolved, "train.checkpoint.mode", get_path(resolved, "train.checkpoint.mode", default="max"))
@@ -218,14 +239,22 @@ class ExperimentRunner:
                     "weight_decay": args.weight_decay,
                 },
             )
+            scheduler_config = get_path(resolved_config, "train.scheduler", default={})
+            scheduler = build_scheduler(optimizer, scheduler_config, max_epochs=args.epochs)
+            early_stopper = build_early_stopper(get_path(resolved_config, "train.early_stopping", default={}))
+            checkpoint_monitor = get_path(resolved_config, "train.checkpoint.monitor", default="val/macro_f1")
+            checkpoint_mode = str(get_path(resolved_config, "train.checkpoint.mode", default="max")).lower()
 
             history_path = run_dir / "history.csv"
             best_path = run_dir / "best.pt"
             last_path = run_dir / "last.pt"
-            best_macro_f1 = -1.0
+            best_score = None
             best_epoch = None
+            trained_epochs = 0
+            stopped_early = False
             fieldnames = [
                 "epoch",
+                "lr",
                 "train_loss",
                 "train_accuracy",
                 "train_macro_f1",
@@ -239,8 +268,10 @@ class ExperimentRunner:
                 for epoch in range(1, args.epochs + 1):
                     train_metrics = trainer.train_epoch(model, train_loader, criterion, optimizer)
                     val_metrics = trainer.validate(model, val_loader, criterion)
+                    trained_epochs = epoch
                     row = {
                         "epoch": epoch,
+                        "lr": optimizer.param_groups[0]["lr"],
                         "train_loss": train_metrics["loss"],
                         "train_accuracy": train_metrics["accuracy"],
                         "train_macro_f1": train_metrics["macro_f1"],
@@ -252,28 +283,52 @@ class ExperimentRunner:
                     handle.flush()
                     print(
                         f"epoch {epoch:03d}/{args.epochs} "
+                        f"lr={row['lr']:.6g} "
                         f"train_loss={row['train_loss']:.4f} train_acc={row['train_accuracy']:.4f} "
                         f"train_f1={row['train_macro_f1']:.4f} val_loss={row['val_loss']:.4f} "
                         f"val_acc={row['val_accuracy']:.4f} val_f1={row['val_macro_f1']:.4f}"
                     )
 
+                    checkpoint_value = resolve_monitor_value(row, checkpoint_monitor)
                     checkpoint = {
                         "epoch": epoch,
                         "model_state": cpu_state_dict(model),
                         "config": legacy_config,
                         "labels": labels,
                         "val_macro_f1": row["val_macro_f1"],
+                        "monitor": checkpoint_monitor,
+                        "monitor_value": checkpoint_value,
                     }
                     torch.save(checkpoint, last_path)
-                    if row["val_macro_f1"] > best_macro_f1:
-                        best_macro_f1 = row["val_macro_f1"]
+                    if is_improvement(checkpoint_value, best_score, checkpoint_mode):
+                        best_score = checkpoint_value
                         best_epoch = epoch
                         torch.save(checkpoint, best_path)
                         manifest["best_epoch"] = best_epoch
                         manifest["best_checkpoint"] = str(best_path)
-                        manifest["best_val_macro_f1"] = best_macro_f1
+                        manifest["best_monitor"] = checkpoint_monitor
+                        manifest["best_metric_value"] = best_score
+                        manifest["best_val_macro_f1"] = row["val_macro_f1"]
                         write_manifest(run_dir, manifest)
 
+                    step_scheduler(scheduler, scheduler_config, row)
+                    if early_stopper is not None:
+                        early_value = resolve_monitor_value(row, early_stopper.monitor)
+                        if early_stopper.update(early_value, epoch):
+                            stopped_early = True
+                            manifest["stopped_early"] = True
+                            manifest["stopped_epoch"] = epoch
+                            manifest["stopped_monitor"] = early_stopper.monitor
+                            manifest["stopped_metric_value"] = early_value
+                            write_manifest(run_dir, manifest)
+                            print(
+                                f"early stopping at epoch {epoch:03d}: "
+                                f"{early_stopper.monitor}={early_value:.6g}"
+                            )
+                            break
+
+            manifest["trained_epochs"] = trained_epochs
+            manifest["stopped_early"] = stopped_early
             if args.skip_test:
                 manifest["status"] = "completed"
                 manifest["finished_at"] = now_iso()
@@ -293,6 +348,8 @@ class ExperimentRunner:
 
             manifest["status"] = "completed"
             manifest["finished_at"] = now_iso()
+            manifest["trained_epochs"] = trained_epochs
+            manifest["stopped_early"] = stopped_early
             manifest["test_summary"] = summary_with_epoch
             write_manifest(run_dir, manifest)
             return run_dir

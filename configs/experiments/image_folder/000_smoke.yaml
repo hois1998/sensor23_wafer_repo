@@ -46,6 +46,14 @@ train:
     name: adam
     lr: 0.001
     weight_decay: 0.0
+  scheduler:
+    name: none
+  early_stopping:
+    enabled: false
+    monitor: val/macro_f1
+    mode: max
+    patience: 10
+    min_delta: 0.0
   amp:
     enabled: false
   checkpoint:
@@ -63,4 +71,3 @@ runtime:
   output_dir: outputs/experiments
   run_name: image_folder_smoke
   deterministic: true
-
