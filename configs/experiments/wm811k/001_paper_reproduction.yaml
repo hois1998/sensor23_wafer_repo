@@ -1,0 +1,106 @@
+schema_version: 1
+
+experiment:
+  name: wm811k_paper_mobilenet_v3_small
+  suite: wm811k_paper_reproduction
+  tags:
+    - wm811k
+    - paper
+    - mobilenetv3
+
+fixed:
+  controls:
+    data.split.seed: 42
+    data.split.test_size: 0.2
+    evaluation.primary_metric: macro_f1
+
+data:
+  module: wm811k
+  source:
+    path: ../LSWMD.pkl
+  preprocessing:
+    channel_mode: colormap
+    image_size: 224
+  split:
+    strategy: stratified_kfold
+    seed: 42
+    test_size: 0.2
+    val_fraction_of_trainval: 0.25
+    n_splits: 4
+    fold_index: 0
+  augmentation:
+    enabled: true
+    target_defect_count: 10000
+    train_only: true
+    transforms:
+      random_crop:
+        padding: 16
+      random_rotation:
+        degrees: 180
+      gaussian_blur:
+        p: 0.2
+      random_erasing:
+        p: 0.25
+  dataloader:
+    batch_size: 128
+    num_workers: 0
+
+task:
+  type: classification
+  class_order:
+    - Center
+    - Donut
+    - Edge-loc
+    - Edge-ring
+    - Loc
+    - Near-full
+    - Random
+    - Scratch
+    - None
+  loss:
+    name: cross_entropy
+    class_weights: none
+  metrics:
+    - accuracy
+    - macro_precision
+    - macro_recall
+    - macro_f1
+    - weighted_f1
+
+model:
+  name: mobilenet_v3_small
+  pretrained: false
+  dropout: 0.35
+
+train:
+  trainer: supervised_torch
+  seed: 42
+  max_epochs: 30
+  optimizer:
+    name: adam
+    lr: 0.0001
+    weight_decay: 0.0
+  scheduler:
+    name: none
+  amp:
+    enabled: false
+  early_stopping:
+    enabled: false
+  checkpoint:
+    monitor: val/macro_f1
+    mode: max
+
+evaluation:
+  splits:
+    - test
+  primary_metric: macro_f1
+  save_predictions: false
+  save_confusion_matrix: true
+  skip_test: false
+
+runtime:
+  device: auto
+  output_dir: outputs/experiments
+  run_name: null
+  deterministic: true
+

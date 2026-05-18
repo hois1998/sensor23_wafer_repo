@@ -1,0 +1,82 @@
+schema_version: 1
+
+experiment:
+  name: wm811k_smoke_small_cnn
+  suite: smoke
+  tags:
+    - wm811k
+    - smoke
+
+data:
+  module: wm811k
+  source:
+    path: data/toy_LSWMD.pkl
+  preprocessing:
+    channel_mode: colormap
+    image_size: 64
+  split:
+    strategy: stratified_holdout
+    seed: 42
+    test_size: 0.2
+    val_fraction_of_trainval: 0.25
+    n_splits: 4
+    fold_index: null
+  augmentation:
+    enabled: true
+    target_defect_count: 20
+    train_only: true
+    transforms:
+      random_crop:
+        padding: 4
+      random_rotation:
+        degrees: 90
+      gaussian_blur:
+        p: 0.0
+      random_erasing:
+        p: 0.0
+  dataloader:
+    batch_size: 16
+    num_workers: 0
+  debug:
+    max_samples_per_class: 12
+
+task:
+  type: classification
+  loss:
+    name: cross_entropy
+    class_weights: none
+  metrics:
+    - accuracy
+    - macro_f1
+
+model:
+  name: small_cnn
+  pretrained: false
+  dropout: 0.2
+
+train:
+  trainer: supervised_torch
+  seed: 42
+  max_epochs: 1
+  optimizer:
+    name: adam
+    lr: 0.0001
+    weight_decay: 0.0
+  amp:
+    enabled: false
+  checkpoint:
+    monitor: val/macro_f1
+    mode: max
+
+evaluation:
+  splits:
+    - test
+  primary_metric: macro_f1
+  skip_test: false
+
+runtime:
+  device: cpu
+  output_dir: outputs/experiments
+  run_name: smoke_config
+  deterministic: true
+

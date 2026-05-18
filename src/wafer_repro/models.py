@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import torch
 from torch import nn
 
+from wafer_repro.core.registry import Registry
 from wafer_repro.labels import PAPER_CLASSES
 
 
@@ -35,6 +37,8 @@ PAPER_MODEL_NAMES = (
     "mobilenet_v3_small",
     "cnn_wdi",
 )
+
+MODEL_REGISTRY: Registry[Callable[..., nn.Module]] = Registry("model")
 
 
 def _replace_classifier(model: nn.Module, model_name: str, num_classes: int) -> nn.Module:
@@ -119,18 +123,29 @@ class SmallCNN(nn.Module):
         return self.net(x)
 
 
-def create_model(
-    model_name: str,
+@MODEL_REGISTRY.register("cnn_wdi")
+def _build_cnn_wdi(
     num_classes: int = len(PAPER_CLASSES),
     pretrained: bool = False,
     dropout: float = 0.35,
 ) -> nn.Module:
-    model_name = model_name.lower()
-    if model_name == "cnn_wdi":
-        return CNNWDIStyle(num_classes=num_classes, dropout=dropout)
-    if model_name == "small_cnn":
-        return SmallCNN(num_classes=num_classes, dropout=dropout)
+    return CNNWDIStyle(num_classes=num_classes, dropout=dropout)
 
+
+@MODEL_REGISTRY.register("small_cnn")
+def _build_small_cnn(
+    num_classes: int = len(PAPER_CLASSES),
+    pretrained: bool = False,
+    dropout: float = 0.2,
+) -> nn.Module:
+    return SmallCNN(num_classes=num_classes, dropout=dropout)
+
+
+def _build_torchvision_classifier(
+    model_name: str,
+    num_classes: int,
+    pretrained: bool,
+) -> nn.Module:
     from torchvision import models
 
     if model_name == "resnet18":
@@ -151,9 +166,39 @@ def create_model(
     if model_name == "mobilenet_v3_small":
         weights = models.MobileNet_V3_Small_Weights.DEFAULT if pretrained else None
         return _replace_classifier(models.mobilenet_v3_small(weights=weights), model_name, num_classes)
+    raise ValueError(f"Unsupported torchvision model: {model_name}")
 
-    choices = ", ".join(sorted(MODEL_SPECS))
-    raise ValueError(f"Unknown model '{model_name}'. Available models: {choices}")
+
+def _register_torchvision_model(model_name: str):
+    @MODEL_REGISTRY.register(model_name)
+    def builder(
+        num_classes: int = len(PAPER_CLASSES),
+        pretrained: bool = False,
+        dropout: float = 0.35,
+    ) -> nn.Module:
+        return _build_torchvision_classifier(model_name, num_classes=num_classes, pretrained=pretrained)
+
+    return builder
+
+
+for _torchvision_model_name in PAPER_MODEL_NAMES:
+    if _torchvision_model_name != "cnn_wdi":
+        _register_torchvision_model(_torchvision_model_name)
+
+
+def create_model(
+    model_name: str,
+    num_classes: int = len(PAPER_CLASSES),
+    pretrained: bool = False,
+    dropout: float = 0.35,
+) -> nn.Module:
+    model_name = model_name.lower()
+    try:
+        builder = MODEL_REGISTRY.get(model_name)
+    except KeyError as exc:
+        choices = ", ".join(MODEL_REGISTRY.keys())
+        raise ValueError(f"Unknown model '{model_name}'. Available models: {choices}") from exc
+    return builder(num_classes=num_classes, pretrained=pretrained, dropout=dropout)
 
 
 def count_parameters(model: nn.Module) -> int:
@@ -172,4 +217,3 @@ def load_checkpoint(path: str, map_location: str | torch.device = "cpu") -> tupl
     )
     model.load_state_dict(checkpoint["model_state"])
     return model, checkpoint
-
