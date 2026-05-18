@@ -445,3 +445,101 @@ Phase 1-3 기준 커밋:
 - `5fa9de4 Add YAML experiment foundation and modular training components`
 
 Phase 4는 별도 커밋으로 마무리한다.
+
+## 2026-05-18 - Phase 5 Sweep runner and comparison artifacts
+
+사양서 Phase 5에 맞춰 YAML 기반 sweep 실행과 suite 결과 비교 기능을 추가했다. 기존 `run_experiments.py`는 paper reproduction 전용 runner로 유지하고, 새 sweep runner는 grid/manual 실험 확장을 담당한다.
+
+### 구현 범위
+
+- `src/wafer_repro/experiment/sweep.py`
+  - sweep YAML load
+  - base experiment config load
+  - fixed values 적용
+  - fixed values를 `fixed.controls`에 반영
+  - grid expansion
+  - manual expansion
+  - seed/fold repeats 확장
+  - trial config materialization
+  - sequential trial execution
+  - `sweep_manifest.json` 저장
+  - `sweep_status.json` 저장
+
+- `src/wafer_repro/sweep.py`
+  - `python -m wafer_repro.sweep --config ...`
+  - `--dry-run` 지원
+
+- `src/wafer_repro/analysis/collector.py`
+  - run directory에서 `test_summary.json`, `run_manifest.json`, `config.json`, `data_summary.json` 수집
+  - `sweep_manifest.json`의 axes metadata를 읽어 `axis_*` 컬럼 추가
+  - `comparison_trials.csv` 생성
+  - `comparison_trials_grouped.csv` 생성
+
+- `src/wafer_repro/collect_results.py`
+  - 기존 CLI를 새 collector 구현으로 연결
+
+- `configs/sweeps/wm811k_smoke_grid.yaml`
+  - smoke용 preprocessing axis grid sweep 추가
+  - `colormap` vs `replicate` 비교
+
+- `pyproject.toml`
+  - `wafer-sweep = "wafer_repro.sweep:main"` entry point 추가
+
+### 검증 결과
+
+문법 검증:
+
+```powershell
+python -m py_compile `
+  src\wafer_repro\experiment\sweep.py `
+  src\wafer_repro\sweep.py `
+  src\wafer_repro\analysis\collector.py `
+  src\wafer_repro\collect_results.py
+```
+
+결과: 성공.
+
+dry-run 검증:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m wafer_repro.sweep `
+  --config configs\sweeps\wm811k_smoke_grid.yaml `
+  --dry-run
+```
+
+결과: `outputs/experiments/wm811k_smoke_grid/_trial_configs` 아래 trial config 2개 생성.
+
+실제 sweep 실행:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.sweep `
+  --config configs\sweeps\wm811k_smoke_grid.yaml
+```
+
+결과: `preprocessing_colormap`, `preprocessing_replicate` 두 trial 모두 학습과 test 평가 성공.
+
+결과 수집:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m wafer_repro.collect_results `
+  --runs-dir outputs\experiments\wm811k_smoke_grid `
+  --out outputs\experiments\wm811k_smoke_grid\comparison_trials.csv
+```
+
+결과:
+
+- `comparison_trials.csv` 생성
+- `comparison_trials_grouped.csv` 생성
+- `axis_preprocessing` 컬럼으로 sweep axis가 기록됨
+
+### 다음 단계
+
+다음 구현 단계는 Phase 6이다.
+
+- WM-811K 외 신규 modality 추가
+- 우선 `image_folder` classification DataModule을 추가해 dataset plugin 구조를 검증
+- smoke용 tiny image dataset 생성 스크립트 또는 config 추가
+- 기존 supervised trainer를 재사용해 신규 modality 실행 가능성 검증

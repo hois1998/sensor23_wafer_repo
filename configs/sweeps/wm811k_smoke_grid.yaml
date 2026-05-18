@@ -1,0 +1,28 @@
+schema_version: 1
+
+sweep:
+  name: wm811k_smoke_grid
+  base_config: ../experiments/wm811k/000_smoke.yaml
+
+  fixed:
+    data.source.path: data/toy_LSWMD.pkl
+    data.split.strategy: stratified_holdout
+    data.split.seed: 42
+    train.max_epochs: 1
+    runtime.device: cpu
+
+  axes:
+    preprocessing:
+      - name: colormap
+        set:
+          data.preprocessing.channel_mode: colormap
+      - name: replicate
+        set:
+          data.preprocessing.channel_mode: replicate
+
+  expansion:
+    mode: grid
+
+  execution:
+    continue_on_error: false
+

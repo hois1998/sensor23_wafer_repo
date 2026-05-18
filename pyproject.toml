@@ -30,6 +30,7 @@ wafer-benchmark = "wafer_repro.benchmark:main"
 wafer-run-paper = "wafer_repro.run_experiments:main"
 wafer-collect = "wafer_repro.collect_results:main"
 wafer-validate-config = "wafer_repro.validate_config:main"
+wafer-sweep = "wafer_repro.sweep:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
