@@ -1,0 +1,66 @@
+schema_version: 1
+
+experiment:
+  name: image_folder_smoke_small_cnn
+  suite: image_folder_smoke
+  tags:
+    - image_folder
+    - smoke
+
+data:
+  module: image_folder
+  source:
+    path: data/toy_images
+  preprocessing:
+    image_size: 64
+  split:
+    strategy: stratified_holdout
+    seed: 42
+    test_size: 0.2
+    val_fraction_of_trainval: 0.25
+  augmentation:
+    enabled: true
+  dataloader:
+    batch_size: 8
+    num_workers: 0
+
+task:
+  type: classification
+  loss:
+    name: cross_entropy
+    class_weights: none
+  metrics:
+    - accuracy
+    - macro_f1
+
+model:
+  name: small_cnn
+  pretrained: false
+  dropout: 0.2
+
+train:
+  trainer: supervised_torch
+  seed: 42
+  max_epochs: 1
+  optimizer:
+    name: adam
+    lr: 0.001
+    weight_decay: 0.0
+  amp:
+    enabled: false
+  checkpoint:
+    monitor: val/macro_f1
+    mode: max
+
+evaluation:
+  splits:
+    - test
+  primary_metric: macro_f1
+  skip_test: false
+
+runtime:
+  device: cpu
+  output_dir: outputs/experiments
+  run_name: image_folder_smoke
+  deterministic: true
+

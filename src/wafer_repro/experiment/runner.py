@@ -29,6 +29,7 @@ from wafer_repro.data import (
     sample_per_class,
     save_records,
 )
+from wafer_repro.datasets.image_folder.datamodule import build_image_folder_bundle
 from wafer_repro.experiment.manifest import now_iso, write_manifest
 from wafer_repro.labels import PAPER_CLASSES, label_to_index
 from wafer_repro.metrics import predict_probabilities, save_evaluation
@@ -163,6 +164,13 @@ def select_splits(args: argparse.Namespace, df):
     return f"kfold_{fold_id}_of_{args.num_folds}", train, val, test
 
 
+def _save_common_records(split_dir: Path, train_base, train_records, val_records, test_records) -> None:
+    save_records(train_base, split_dir / "train_base.csv")
+    save_records(train_records, split_dir / "train_augmented.csv")
+    save_records(val_records, split_dir / "val.csv")
+    save_records(test_records, split_dir / "test.csv")
+
+
 class ExperimentRunner:
     def __init__(self, args: argparse.Namespace, loaded_config: dict[str, Any]) -> None:
         self.args = args
@@ -202,10 +210,68 @@ class ExperimentRunner:
             print(f"Device: {device_choice.name} ({device_choice.backend})")
             print(f"Run directory: {run_dir}")
 
-            df, wafer_col = load_lswmd(args.data)
-            df = sample_per_class(df, args.max_samples_per_class, args.seed)
-            split_strategy, train_base, val_records, test_records = select_splits(args, df)
+            data_module = get_path(resolved_config, "data.module", default="wm811k")
+            if data_module == "image_folder":
+                image_bundle = build_image_folder_bundle(resolved_config)
+                labels = image_bundle.labels
+                train_base = image_bundle.train_base
+                train_records = image_bundle.train_records
+                val_records = image_bundle.val_records
+                test_records = image_bundle.test_records
+                train_ds = image_bundle.train_dataset
+                val_ds = image_bundle.val_dataset
+                test_ds = image_bundle.test_dataset
+                split_strategy = image_bundle.split_strategy
+                data_summary = image_bundle.data_summary
+                wafer_col = None
+            elif data_module == "wm811k":
+                df, wafer_col = load_lswmd(args.data)
+                df = sample_per_class(df, args.max_samples_per_class, args.seed)
+                split_strategy, train_base, val_records, test_records = select_splits(args, df)
+                train_records = (
+                    train_base
+                    if args.no_augment
+                    else augment_training_records(train_base, target_defect_count=args.target_defect_count, seed=args.seed)
+                )
+
+                labels = PAPER_CLASSES
+                label_map = label_to_index(labels)
+                common_dataset_kwargs = {
+                    "df": df,
+                    "wafer_col": wafer_col,
+                    "label_map": label_map,
+                    "image_size": args.image_size,
+                    "channel_mode": args.channel_mode,
+                    "rotation_degrees": args.rotation_degrees,
+                    "crop_padding": args.crop_padding,
+                    "blur_prob": args.blur_prob,
+                    "erase_prob": args.erase_prob,
+                }
+                train_ds = WaferMapDataset(
+                    records=train_records,
+                    train=True,
+                    augmentation=not args.no_augment,
+                    **common_dataset_kwargs,
+                )
+                val_ds = WaferMapDataset(records=val_records, train=False, augmentation=False, **common_dataset_kwargs)
+                test_ds = WaferMapDataset(records=test_records, train=False, augmentation=False, **common_dataset_kwargs)
+                data_summary = {
+                    "raw_labeled_rows_after_optional_sampling": int(len(df)),
+                    "split_strategy": split_strategy,
+                    "train_base_records": int(len(train_base)),
+                    "train_records_after_augmentation": int(len(train_records)),
+                    "val_records": int(len(val_records)),
+                    "test_records": int(len(test_records)),
+                    "class_counts_raw": record_counts(train_base) | {"__note__": "train_base only"},
+                    "class_counts_train_augmented": record_counts(train_records),
+                    "class_counts_val": record_counts(val_records),
+                    "class_counts_test": record_counts(test_records),
+                }
+            else:
+                raise ValueError(f"Unknown data.module: {data_module}")
+
             set_path(resolved_config, "data.split.resolved_strategy", split_strategy)
+            set_path(resolved_config, "task.class_order", list(labels))
             resolved_hash = config_hash(
                 resolved_config,
                 exclude_paths={"runtime.output_dir", "runtime.run_dir", "runtime.config_hash"},
@@ -215,56 +281,13 @@ class ExperimentRunner:
             manifest["split_strategy"] = split_strategy
             write_manifest(run_dir, manifest)
 
-            train_records = (
-                train_base
-                if args.no_augment
-                else augment_training_records(train_base, target_defect_count=args.target_defect_count, seed=args.seed)
-            )
-
-            save_records(train_base, split_dir / "train_base.csv")
-            save_records(train_records, split_dir / "train_augmented.csv")
-            save_records(val_records, split_dir / "val.csv")
-            save_records(test_records, split_dir / "test.csv")
-
-            labels = PAPER_CLASSES
-            label_map = label_to_index(labels)
-            common_dataset_kwargs = {
-                "df": df,
-                "wafer_col": wafer_col,
-                "label_map": label_map,
-                "image_size": args.image_size,
-                "channel_mode": args.channel_mode,
-                "rotation_degrees": args.rotation_degrees,
-                "crop_padding": args.crop_padding,
-                "blur_prob": args.blur_prob,
-                "erase_prob": args.erase_prob,
-            }
-            train_ds = WaferMapDataset(
-                records=train_records,
-                train=True,
-                augmentation=not args.no_augment,
-                **common_dataset_kwargs,
-            )
-            val_ds = WaferMapDataset(records=val_records, train=False, augmentation=False, **common_dataset_kwargs)
-            test_ds = WaferMapDataset(records=test_records, train=False, augmentation=False, **common_dataset_kwargs)
+            _save_common_records(split_dir, train_base, train_records, val_records, test_records)
 
             pin_memory = device_choice.backend == "cuda"
             train_loader = make_loader(train_ds, args.batch_size, True, args.num_workers, pin_memory)
             val_loader = make_loader(val_ds, args.batch_size, False, args.num_workers, pin_memory)
             test_loader = make_loader(test_ds, args.batch_size, False, args.num_workers, pin_memory)
 
-            data_summary = {
-                "raw_labeled_rows_after_optional_sampling": int(len(df)),
-                "split_strategy": split_strategy,
-                "train_base_records": int(len(train_base)),
-                "train_records_after_augmentation": int(len(train_records)),
-                "val_records": int(len(val_records)),
-                "test_records": int(len(test_records)),
-                "class_counts_raw": record_counts(train_base) | {"__note__": "train_base only"},
-                "class_counts_train_augmented": record_counts(train_records),
-                "class_counts_val": record_counts(val_records),
-                "class_counts_test": record_counts(test_records),
-            }
             write_json(run_dir / "data_summary.json", data_summary)
             print(json.dumps(data_summary, indent=2, ensure_ascii=False))
             if self.loaded_config:
@@ -280,6 +303,7 @@ class ExperimentRunner:
                     "resolved_config_path": str(run_dir / "resolved_config.yaml"),
                     "config_hash": resolved_hash,
                     "wafer_column": wafer_col,
+                    "data_module": data_module,
                     "split_strategy": split_strategy,
                     "device_name": device_choice.name,
                     "device_backend": device_choice.backend,

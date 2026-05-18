@@ -543,3 +543,105 @@ python -m wafer_repro.collect_results `
 - 우선 `image_folder` classification DataModule을 추가해 dataset plugin 구조를 검증
 - smoke용 tiny image dataset 생성 스크립트 또는 config 추가
 - 기존 supervised trainer를 재사용해 신규 modality 실행 가능성 검증
+
+## 2026-05-18 - Phase 6 Image-folder modality smoke path
+
+사양서 Phase 6에 맞춰 WM-811K 외 신규 modality를 추가했다. 첫 신규 modality는 가장 단순한 class-folder image classification이며, 기존 `ExperimentRunner`, `ClassificationTask`, `SupervisedTorchTrainer`, `small_cnn`을 그대로 재사용해 학습과 평가가 가능하도록 했다.
+
+### 구현 범위
+
+- `src/wafer_repro/datasets/image_folder/datamodule.py`
+  - class folder scan
+  - image records 생성
+  - stratified holdout split
+  - image transform 생성
+  - `ImageFolderRecordsDataset`
+  - image-folder data summary 생성
+
+- `src/wafer_repro/experiment/runner.py`
+  - `data.module: image_folder` 분기 추가
+  - image-folder labels를 task class order로 반영
+  - 기존 supervised training/evaluation path 재사용
+  - 기존 WM-811K path 유지
+
+- `scripts/make_toy_image_folder.py`
+  - smoke 검증용 tiny image-folder dataset 생성
+  - class: `diagonal`, `horizontal`, `vertical`
+
+- `configs/experiments/image_folder/000_smoke.yaml`
+  - image-folder smoke experiment config 추가
+
+- `.gitignore`
+  - 생성된 toy image data가 Git에 들어가지 않도록 `data/toy_images/` 추가
+
+### 검증 결과
+
+toy image dataset 생성:
+
+```powershell
+python .\scripts\make_toy_image_folder.py `
+  --out data\toy_images `
+  --per-class 12 `
+  --size 48
+```
+
+결과: 3개 class, 총 36개 PNG 생성.
+
+문법 및 config 검증:
+
+```powershell
+python -m py_compile `
+  src\wafer_repro\datasets\image_folder\datamodule.py `
+  src\wafer_repro\experiment\runner.py `
+  scripts\make_toy_image_folder.py
+
+$env:PYTHONPATH='src'
+python -m wafer_repro.validate_config `
+  --config configs\experiments\image_folder\000_smoke.yaml
+```
+
+결과: 성공.
+
+image-folder smoke 학습:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.train `
+  --config configs\experiments\image_folder\000_smoke.yaml
+```
+
+결과: 1 epoch 학습, checkpoint 저장, test 평가 성공.
+
+확인된 artifact:
+
+- `outputs/experiments/image_folder_smoke/run_manifest.json`
+- `outputs/experiments/image_folder_smoke/resolved_config.yaml`
+- `outputs/experiments/image_folder_smoke/data_summary.json`
+- `outputs/experiments/image_folder_smoke/test_summary.json`
+
+`resolved_config.yaml`에는 다음 class order가 기록됨.
+
+- `diagonal`
+- `horizontal`
+- `vertical`
+
+결과 수집:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m wafer_repro.collect_results `
+  --runs-dir outputs\experiments `
+  --out outputs\experiments\comparison_all_trials.csv
+```
+
+결과: image-folder run도 기존 collector에서 수집 가능함을 확인.
+
+### 다음 단계
+
+사양서에 명시된 Phase 0-6의 기본 이행은 완료했다. 이후부터는 확장 hardening 단계로 넘어간다.
+
+- `evaluate.py`와 `infer.py`도 `ExperimentRunner`/DataModule registry 기반으로 일반화
+- image-folder predefined split 지원
+- `ExperimentRunner` 내부 data module branch를 registry로 전환
+- scheduler, early stopping callback 추가
+- sweep parallelism과 resume 기능 추가
