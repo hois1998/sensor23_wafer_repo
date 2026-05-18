@@ -351,3 +351,97 @@ conda run -n wm811k python -m wafer_repro.train `
 - `train.py`의 orchestration을 runner로 이동
 - run manifest 저장
 - train/evaluate/infer 흐름을 runner 중심으로 정리
+
+## 2026-05-18 - Phase 4 ExperimentRunner and run manifest
+
+사양서 Phase 4에 맞춰 학습 실행 orchestration을 `train.py`에서 `ExperimentRunner`로 이동했다. 이제 `train.py`는 CLI argument parsing과 config 기본값 merge만 담당하고, 실제 run directory 생성, split, dataset, model/task/trainer 조립, 학습, 평가, artifact 저장은 runner가 수행한다.
+
+### 구현 범위
+
+- `src/wafer_repro/experiment/manifest.py`
+  - timezone-aware ISO timestamp helper 추가
+  - `run_manifest.json` 저장 helper 추가
+
+- `src/wafer_repro/experiment/runner.py`
+  - `ExperimentRunner`
+  - `build_resolved_config`
+  - `select_splits`
+  - run directory와 artifact directory 생성
+  - fixed control 검증
+  - split 생성 및 저장
+  - dataset/dataloader 생성
+  - model/task/trainer/optimizer 조립
+  - train/validation loop 실행
+  - best/last checkpoint 저장
+  - test 평가 실행
+  - success/failure 상태를 `run_manifest.json`에 기록
+
+- `src/wafer_repro/train.py`
+  - 기존 orchestration 제거
+  - CLI parser 유지
+  - `ExperimentRunner(args, loaded_config).run()` 호출로 단순화
+
+### run manifest schema
+
+현재 `run_manifest.json`에는 다음 정보가 기록된다.
+
+- `experiment_name`
+- `suite`
+- `run_name`
+- `run_dir`
+- `status`: `running`, `completed`, `failed`
+- `started_at`
+- `finished_at`
+- `config_hash`
+- `primary_metric`
+- `split_strategy`
+- `best_epoch`
+- `best_checkpoint`
+- `best_val_macro_f1`
+- `test_summary`
+- `error`
+
+### 검증 결과
+
+문법 검증:
+
+```powershell
+python -m py_compile `
+  src\wafer_repro\experiment\manifest.py `
+  src\wafer_repro\experiment\runner.py `
+  src\wafer_repro\train.py
+```
+
+결과: 성공.
+
+smoke 학습 검증:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.train `
+  --config configs\experiments\wm811k\000_smoke.yaml `
+  --set runtime.run_name=smoke_phase4
+```
+
+결과: 1 epoch 학습, checkpoint 저장, test 평가 성공. `outputs/experiments/smoke_phase4/run_manifest.json`에 `status: completed`, `best_epoch: 1`, `test_summary`가 기록됨.
+
+failure manifest 검증:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.train `
+  --config configs\experiments\wm811k\001_paper_reproduction.yaml `
+  --set runtime.run_name=fixed_fail_phase4 `
+  --seed 123 `
+  --skip-test
+```
+
+결과: fixed control 위반으로 실행 실패. `outputs/experiments/fixed_fail_phase4/run_manifest.json`에 `status: failed`와 오류 메시지가 기록됨.
+
+### Commit
+
+Phase 1-3 기준 커밋:
+
+- `5fa9de4 Add YAML experiment foundation and modular training components`
+
+Phase 4는 별도 커밋으로 마무리한다.
