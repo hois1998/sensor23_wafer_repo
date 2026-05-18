@@ -6,6 +6,9 @@ from typing import Any
 
 import pandas as pd
 
+from wafer_repro.datasets.base import DataBundle
+from wafer_repro.datasets.registry import DATA_MODULE_REGISTRY
+from wafer_repro.datasets.wm811k.dataset import WaferMapDataset
 from wafer_repro.datasets.wm811k.records import augment_training_records, sample_per_class
 from wafer_repro.datasets.wm811k.source import load_lswmd
 from wafer_repro.datasets.wm811k.split import (
@@ -14,6 +17,7 @@ from wafer_repro.datasets.wm811k.split import (
     make_predefined_file_split,
     make_single_split,
 )
+from wafer_repro.labels import PAPER_CLASSES, label_to_index
 
 
 @dataclass
@@ -83,3 +87,82 @@ class WM811KDataModule:
         seed = int(self.config.get("train", {}).get("seed", self.config.get("data", {}).get("split", {}).get("seed", 42)))
         return augment_training_records(train_base, target_defect_count=target_count, seed=seed)
 
+
+def _record_counts(records: pd.DataFrame, labels: tuple[str, ...]) -> dict[str, int]:
+    return records["label"].value_counts().reindex(labels).fillna(0).astype(int).to_dict()
+
+
+@DATA_MODULE_REGISTRY.register("wm811k")
+def build_wm811k_bundle(config: dict[str, Any]) -> DataBundle:
+    data_module = WM811KDataModule(config)
+    df, wafer_col = data_module.load_raw()
+    split_bundle = data_module.split(df)
+    train_records = data_module.augment_train(split_bundle.train_base)
+
+    data_config = config.get("data", {})
+    preprocessing = data_config.get("preprocessing", {})
+    augmentation = data_config.get("augmentation", {})
+    transforms_config = augmentation.get("transforms", {})
+    random_rotation = transforms_config.get("random_rotation", {})
+    random_crop = transforms_config.get("random_crop", {})
+    gaussian_blur = transforms_config.get("gaussian_blur", {})
+    random_erasing = transforms_config.get("random_erasing", {})
+
+    labels = tuple(PAPER_CLASSES)
+    label_map = label_to_index(labels)
+    common_dataset_kwargs = {
+        "df": df,
+        "wafer_col": wafer_col,
+        "label_map": label_map,
+        "image_size": int(preprocessing.get("image_size", 224)),
+        "channel_mode": preprocessing.get("channel_mode", "colormap"),
+        "rotation_degrees": float(random_rotation.get("degrees", 180.0)),
+        "crop_padding": int(random_crop.get("padding", 16)),
+        "blur_prob": float(gaussian_blur.get("p", 0.2)),
+        "erase_prob": float(random_erasing.get("p", 0.25)),
+    }
+    augmentation_enabled = bool(augmentation.get("enabled", True))
+    train_dataset = WaferMapDataset(
+        records=train_records,
+        train=True,
+        augmentation=augmentation_enabled,
+        **common_dataset_kwargs,
+    )
+    val_dataset = WaferMapDataset(
+        records=split_bundle.val,
+        train=False,
+        augmentation=False,
+        **common_dataset_kwargs,
+    )
+    test_dataset = WaferMapDataset(
+        records=split_bundle.test,
+        train=False,
+        augmentation=False,
+        **common_dataset_kwargs,
+    )
+
+    data_summary = {
+        "raw_labeled_rows_after_optional_sampling": int(len(df)),
+        "split_strategy": split_bundle.strategy,
+        "train_base_records": int(len(split_bundle.train_base)),
+        "train_records_after_augmentation": int(len(train_records)),
+        "val_records": int(len(split_bundle.val)),
+        "test_records": int(len(split_bundle.test)),
+        "class_counts_raw": _record_counts(split_bundle.train_base, labels) | {"__note__": "train_base only"},
+        "class_counts_train_augmented": _record_counts(train_records, labels),
+        "class_counts_val": _record_counts(split_bundle.val, labels),
+        "class_counts_test": _record_counts(split_bundle.test, labels),
+    }
+    return DataBundle(
+        labels=labels,
+        train_base=split_bundle.train_base,
+        train_records=train_records,
+        val_records=split_bundle.val,
+        test_records=split_bundle.test,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        data_summary=data_summary,
+        split_strategy=split_bundle.strategy,
+        metadata={"wafer_column": wafer_col},
+    )

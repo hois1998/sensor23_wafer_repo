@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +8,9 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 from torchvision import transforms
+
+from wafer_repro.datasets.base import DataBundle
+from wafer_repro.datasets.registry import DATA_MODULE_REGISTRY
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -117,21 +119,8 @@ def record_counts(records: pd.DataFrame, labels: tuple[str, ...]) -> dict[str, i
     return records["label"].value_counts().reindex(labels).fillna(0).astype(int).to_dict()
 
 
-@dataclass
-class ImageFolderBundle:
-    labels: tuple[str, ...]
-    train_base: pd.DataFrame
-    train_records: pd.DataFrame
-    val_records: pd.DataFrame
-    test_records: pd.DataFrame
-    train_dataset: Dataset
-    val_dataset: Dataset
-    test_dataset: Dataset
-    data_summary: dict[str, Any]
-    split_strategy: str
-
-
-def build_image_folder_bundle(config: dict[str, Any]) -> ImageFolderBundle:
+@DATA_MODULE_REGISTRY.register("image_folder")
+def build_image_folder_bundle(config: dict[str, Any]) -> DataBundle:
     data_config = config.get("data", {})
     source_config = data_config.get("source", {})
     root = source_config.get("path") or source_config.get("root")
@@ -173,7 +162,7 @@ def build_image_folder_bundle(config: dict[str, Any]) -> ImageFolderBundle:
         "class_counts_val": record_counts(val_records, labels),
         "class_counts_test": record_counts(test_records, labels),
     }
-    return ImageFolderBundle(
+    return DataBundle(
         labels=labels,
         train_base=train_base,
         train_records=train_records,
@@ -184,5 +173,5 @@ def build_image_folder_bundle(config: dict[str, Any]) -> ImageFolderBundle:
         test_dataset=test_dataset,
         data_summary=data_summary,
         split_strategy="single_6_2_2",
+        metadata={"source_root": str(root)},
     )
-

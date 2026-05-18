@@ -17,21 +17,10 @@ from wafer_repro.core.config import (
     write_yaml,
 )
 from wafer_repro.core.environment import capture_environment
-from wafer_repro.data import (
-    WaferMapDataset,
-    augment_training_records,
-    load_lswmd,
-    make_external_test_split,
-    make_kfold_splits,
-    make_predefined_file_split,
-    make_single_split,
-    record_counts,
-    sample_per_class,
-    save_records,
-)
-from wafer_repro.datasets.image_folder.datamodule import build_image_folder_bundle
+from wafer_repro.data import save_records
+from wafer_repro.datasets.registry import create_data_bundle
 from wafer_repro.experiment.manifest import now_iso, write_manifest
-from wafer_repro.labels import PAPER_CLASSES, label_to_index
+from wafer_repro.labels import PAPER_CLASSES
 from wafer_repro.metrics import predict_probabilities, save_evaluation
 from wafer_repro.models import create_model
 from wafer_repro.tasks.registry import create_task
@@ -114,56 +103,6 @@ def build_resolved_config(args: argparse.Namespace, loaded_config: dict[str, Any
     return resolved
 
 
-def select_splits(args: argparse.Namespace, df):
-    strategy = args.split_strategy or ("stratified_kfold" if args.fold is not None else "stratified_holdout")
-
-    if strategy == "predefined_files":
-        missing = [
-            name
-            for name, value in {
-                "--train-split-file": args.train_split_file,
-                "--val-split-file": args.val_split_file,
-                "--test-split-file": args.test_split_file,
-            }.items()
-            if not value
-        ]
-        if missing:
-            raise ValueError(f"predefined_files split requires: {', '.join(missing)}")
-        train, val, test = make_predefined_file_split(args.train_split_file, args.val_split_file, args.test_split_file)
-        return "predefined_files", train, val, test
-
-    if strategy == "external_test_with_train_val_split":
-        if not args.external_test_path:
-            raise ValueError("external_test_with_train_val_split requires --external-test-path.")
-        train, val, test = make_external_test_split(
-            df,
-            args.external_test_path,
-            id_column=args.external_id_column,
-            val_fraction_of_trainval=args.val_fraction_of_trainval,
-            seed=args.seed,
-        )
-        return "external_test_with_train_val_split", train, val, test
-
-    if strategy == "stratified_holdout":
-        train, val, test = make_single_split(
-            df,
-            test_size=args.test_size,
-            val_fraction_of_trainval=args.val_fraction_of_trainval,
-            seed=args.seed,
-        )
-        return "single_6_2_2", train, val, test
-
-    if strategy != "stratified_kfold":
-        raise ValueError(f"Unknown split strategy: {strategy}")
-
-    fold = 0 if args.fold is None else args.fold
-    splits = make_kfold_splits(df, test_size=args.test_size, n_splits=args.num_folds, seed=args.seed)
-    if fold < 0 or fold >= len(splits):
-        raise ValueError(f"--fold must be between 0 and {len(splits) - 1}.")
-    fold_id, train, val, test = splits[fold]
-    return f"kfold_{fold_id}_of_{args.num_folds}", train, val, test
-
-
 def _save_common_records(split_dir: Path, train_base, train_records, val_records, test_records) -> None:
     save_records(train_base, split_dir / "train_base.csv")
     save_records(train_records, split_dir / "train_augmented.csv")
@@ -211,64 +150,18 @@ class ExperimentRunner:
             print(f"Run directory: {run_dir}")
 
             data_module = get_path(resolved_config, "data.module", default="wm811k")
-            if data_module == "image_folder":
-                image_bundle = build_image_folder_bundle(resolved_config)
-                labels = image_bundle.labels
-                train_base = image_bundle.train_base
-                train_records = image_bundle.train_records
-                val_records = image_bundle.val_records
-                test_records = image_bundle.test_records
-                train_ds = image_bundle.train_dataset
-                val_ds = image_bundle.val_dataset
-                test_ds = image_bundle.test_dataset
-                split_strategy = image_bundle.split_strategy
-                data_summary = image_bundle.data_summary
-                wafer_col = None
-            elif data_module == "wm811k":
-                df, wafer_col = load_lswmd(args.data)
-                df = sample_per_class(df, args.max_samples_per_class, args.seed)
-                split_strategy, train_base, val_records, test_records = select_splits(args, df)
-                train_records = (
-                    train_base
-                    if args.no_augment
-                    else augment_training_records(train_base, target_defect_count=args.target_defect_count, seed=args.seed)
-                )
-
-                labels = PAPER_CLASSES
-                label_map = label_to_index(labels)
-                common_dataset_kwargs = {
-                    "df": df,
-                    "wafer_col": wafer_col,
-                    "label_map": label_map,
-                    "image_size": args.image_size,
-                    "channel_mode": args.channel_mode,
-                    "rotation_degrees": args.rotation_degrees,
-                    "crop_padding": args.crop_padding,
-                    "blur_prob": args.blur_prob,
-                    "erase_prob": args.erase_prob,
-                }
-                train_ds = WaferMapDataset(
-                    records=train_records,
-                    train=True,
-                    augmentation=not args.no_augment,
-                    **common_dataset_kwargs,
-                )
-                val_ds = WaferMapDataset(records=val_records, train=False, augmentation=False, **common_dataset_kwargs)
-                test_ds = WaferMapDataset(records=test_records, train=False, augmentation=False, **common_dataset_kwargs)
-                data_summary = {
-                    "raw_labeled_rows_after_optional_sampling": int(len(df)),
-                    "split_strategy": split_strategy,
-                    "train_base_records": int(len(train_base)),
-                    "train_records_after_augmentation": int(len(train_records)),
-                    "val_records": int(len(val_records)),
-                    "test_records": int(len(test_records)),
-                    "class_counts_raw": record_counts(train_base) | {"__note__": "train_base only"},
-                    "class_counts_train_augmented": record_counts(train_records),
-                    "class_counts_val": record_counts(val_records),
-                    "class_counts_test": record_counts(test_records),
-                }
-            else:
-                raise ValueError(f"Unknown data.module: {data_module}")
+            data_bundle = create_data_bundle(data_module, resolved_config)
+            labels = data_bundle.labels
+            train_base = data_bundle.train_base
+            train_records = data_bundle.train_records
+            val_records = data_bundle.val_records
+            test_records = data_bundle.test_records
+            train_ds = data_bundle.train_dataset
+            val_ds = data_bundle.val_dataset
+            test_ds = data_bundle.test_dataset
+            split_strategy = data_bundle.split_strategy
+            data_summary = data_bundle.data_summary
+            wafer_col = data_bundle.metadata.get("wafer_column")
 
             set_path(resolved_config, "data.split.resolved_strategy", split_strategy)
             set_path(resolved_config, "task.class_order", list(labels))
