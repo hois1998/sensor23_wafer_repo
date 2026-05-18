@@ -645,3 +645,87 @@ python -m wafer_repro.collect_results `
 - `ExperimentRunner` 내부 data module branch를 registry로 전환
 - scheduler, early stopping callback 추가
 - sweep parallelism과 resume 기능 추가
+
+## 2026-05-18 - Phase 7 Evaluate/infer modality hardening
+
+Phase 7 hardening으로 `evaluate.py`와 `infer.py`를 image-folder checkpoint까지 처리할 수 있도록 확장했다. 기존 WM-811K 평가/추론 경로는 유지했다.
+
+### 구현 범위
+
+- `src/wafer_repro/evaluate.py`
+  - checkpoint `config["data_module"]` 확인
+  - `wm811k` checkpoint는 기존 `WaferMapDataset` 경로 사용
+  - `image_folder` checkpoint는 split CSV의 `image_path`를 사용해 `ImageFolderRecordsDataset` 구성
+
+- `src/wafer_repro/infer.py`
+  - `--image` 옵션 추가
+  - image-folder checkpoint 단일 이미지 추론 지원
+  - image-folder 추론 결과 시각화 저장 파일명을 `prediction.png`로 일반화
+  - 기존 wafer row / original index / npy 추론 유지
+
+### 검증 결과
+
+문법 검증:
+
+```powershell
+python -m py_compile `
+  src\wafer_repro\evaluate.py `
+  src\wafer_repro\infer.py
+```
+
+결과: 성공.
+
+image-folder checkpoint 재평가:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.evaluate `
+  --checkpoint outputs\experiments\image_folder_smoke\best.pt `
+  --split test `
+  --device cpu `
+  --out-dir outputs\experiments\image_folder_smoke\metrics_recheck
+```
+
+결과: 성공.
+
+image-folder 단일 이미지 추론:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.infer `
+  --checkpoint outputs\experiments\image_folder_smoke\best.pt `
+  --image data\toy_images\horizontal\000.png `
+  --device cpu `
+  --top-k 3 `
+  --out-dir outputs\experiments\image_folder_smoke\single_infer
+```
+
+결과: 성공. `horizontal` 이미지에 대해 top-1 `horizontal` 출력.
+
+기존 WM-811K checkpoint 재평가/추론 회귀 검증:
+
+```powershell
+$env:PYTHONPATH='src'
+conda run -n wm811k python -m wafer_repro.evaluate `
+  --data data\toy_LSWMD.pkl `
+  --checkpoint outputs\experiments\smoke_config\best.pt `
+  --split test `
+  --device cpu `
+  --out-dir outputs\experiments\smoke_config\metrics_phase7_recheck
+
+conda run -n wm811k python -m wafer_repro.infer `
+  --data data\toy_LSWMD.pkl `
+  --checkpoint outputs\experiments\smoke_config\best.pt `
+  --row-index 0 `
+  --device cpu `
+  --top-k 3
+```
+
+결과: 둘 다 성공.
+
+### 다음 단계
+
+- DataModule branch를 registry로 전환
+- early stopping callback 추가
+- scheduler config 적용
+- sweep resume/skip-completed 지원
