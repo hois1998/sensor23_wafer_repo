@@ -62,6 +62,7 @@
 | Phase 9 | `7b4c12e` | 12.2, 12.3, 18.5, 20 |
 | Phase 10 | `60a3e90` | 7.1, 15, 26 |
 | Phase 11 | 현재 문서 | 1-30 전체 추적 체계 |
+| Phase 12 | validation preflight 구현 | 6, 15, 27, 28 |
 
 ## 후속 Phase 재정의
 
@@ -93,15 +94,13 @@
 
 ## 다음 작업
 
-다음 Phase는 Phase 12다.
+다음 Phase는 Phase 13이다.
 
-Phase 12에서는 `validate_config.py`와 runner 시작 전 preflight를 강화한다. 최소 검증 범위는 다음이다.
+Phase 13에서는 artifact contract를 표준화한다. 최소 구현 범위는 다음이다.
 
-- `data.module`이 data module registry에 존재하는지
-- `model.name`이 model registry에 존재하는지
-- `task.type`과 `train.trainer`가 registry에 존재하는지
-- checkpoint/early-stopping/scheduler monitor가 현재 history metric으로 해석 가능한지
-- checkpoint/early-stopping/scheduler mode가 `min` 또는 `max`인지
-- external/predefined split file path가 존재하는지
-- fixed controls가 sweep axis나 CLI override로 깨지지 않는지
-- `data.source.path` 또는 `data.source.root`가 실행 전에 확인 가능한지
+- raw dataset identity 저장: path, size, mtime, optional sha256
+- split artifact hash 저장
+- preprocessing/augmentation manifest 저장
+- checkpoint contract 명문화
+- classification prediction CSV 저장
+- collector가 prediction/artifact 존재 여부를 확인하도록 확장

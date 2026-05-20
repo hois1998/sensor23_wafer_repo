@@ -17,6 +17,7 @@ from wafer_repro.core.config import (
     write_yaml,
 )
 from wafer_repro.core.environment import capture_environment
+from wafer_repro.core.validation import validate_experiment_config
 from wafer_repro.data import save_records
 from wafer_repro.datasets.registry import create_data_bundle
 from wafer_repro.experiment.manifest import now_iso, write_manifest
@@ -167,6 +168,7 @@ class ExperimentRunner:
 
         try:
             validate_fixed_controls(resolved_config)
+            validate_experiment_config(resolved_config, check_paths=True)
             print(f"Device: {device_choice.name} ({device_choice.backend})")
             print(f"Run directory: {run_dir}")
 

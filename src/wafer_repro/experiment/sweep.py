@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from wafer_repro.core.config import deep_merge, read_yaml, set_path, write_yaml
+from wafer_repro.core.validation import validate_sweep_config
 from wafer_repro.utils import ensure_dir, write_json
 
 
@@ -87,6 +88,7 @@ def _axis_trials(sweep: dict[str, Any]) -> list[tuple[str, dict[str, Any], dict[
 def expand_sweep(sweep_path: str | Path) -> tuple[dict[str, Any], list[TrialSpec]]:
     sweep_path = Path(sweep_path)
     sweep_config = read_yaml(sweep_path)
+    validate_sweep_config(sweep_config)
     sweep = sweep_config["sweep"]
     base = _load_base_config(sweep_path, sweep_config)
     fixed = sweep.get("fixed", {})

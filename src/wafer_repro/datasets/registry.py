@@ -22,3 +22,8 @@ def create_data_bundle(module_name: str, config: dict[str, Any]) -> DataBundle:
     _import_builtin_data_modules()
     builder = DATA_MODULE_REGISTRY.get(module_name)
     return builder(config)
+
+
+def registered_data_module_names() -> tuple[str, ...]:
+    _import_builtin_data_modules()
+    return DATA_MODULE_REGISTRY.keys()
