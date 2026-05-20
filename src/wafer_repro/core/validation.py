@@ -283,8 +283,18 @@ def validate_sweep_config(
         _add_missing(issues, "sweep.base_config")
 
     expansion_mode = str(sweep.get("expansion", {}).get("mode", "grid"))
-    if expansion_mode not in {"grid", "manual"}:
-        issues.append(ValidationIssue("sweep.expansion.mode", f"unsupported expansion mode {expansion_mode!r}; available: grid, manual"))
+    if expansion_mode not in {"grid", "manual", "random"}:
+        issues.append(ValidationIssue("sweep.expansion.mode", f"unsupported expansion mode {expansion_mode!r}; available: grid, manual, random"))
+    if expansion_mode == "random":
+        num_trials = sweep.get("expansion", {}).get("num_trials", sweep.get("expansion", {}).get("n_trials"))
+        if num_trials is None:
+            _add_missing(issues, "sweep.expansion.num_trials")
+        else:
+            try:
+                if int(num_trials) <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                issues.append(ValidationIssue("sweep.expansion.num_trials", f"expected a positive integer, got {num_trials!r}"))
 
     fixed = sweep.get("fixed", {})
     if fixed is not None and not isinstance(fixed, dict):

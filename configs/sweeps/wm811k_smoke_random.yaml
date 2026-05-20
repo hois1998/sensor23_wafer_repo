@@ -1,7 +1,7 @@
 schema_version: 1
 
 sweep:
-  name: wm811k_smoke_grid
+  name: wm811k_smoke_random
   base_config: ../experiments/wm811k/000_smoke.yaml
 
   fixed:
@@ -19,12 +19,21 @@ sweep:
       - name: replicate
         set:
           data.preprocessing.channel_mode: replicate
+    optimizer:
+      - name: adam
+        set:
+          train.optimizer.name: adam
+      - name: adamw
+        set:
+          train.optimizer.name: adamw
 
   expansion:
-    mode: grid
+    mode: random
+    num_trials: 2
+    seed: 7
 
   execution:
     continue_on_error: false
     skip_completed: false
-    max_workers: 1
+    max_workers: 2
     retry_failed: 0

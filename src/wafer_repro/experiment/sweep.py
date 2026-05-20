@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import itertools
 import json
+import random
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -65,12 +69,30 @@ def _axis_trials(sweep: dict[str, Any]) -> list[tuple[str, dict[str, Any], dict[
             trials.append((name, item.get("set", {}), item.get("axes", {"manual": name})))
         return trials
 
-    if mode != "grid":
-        raise ValueError(f"Unsupported sweep expansion mode: {mode}")
-
     axes = sweep.get("axes", {})
     include = expansion.get("include") or list(axes)
     selected_axes = [(axis_name, axes[axis_name]) for axis_name in include]
+
+    if mode == "random":
+        rng = random.Random(int(expansion.get("seed", 42)))
+        num_trials = int(expansion.get("num_trials", expansion.get("n_trials", 1)))
+        trials = []
+        for trial_index in range(1, num_trials + 1):
+            values: dict[str, Any] = {}
+            axis_names: dict[str, str] = {}
+            parts = [f"random={trial_index:03d}"]
+            for axis_name, methods in selected_axes:
+                method = rng.choice(methods)
+                method_name = method["name"]
+                values.update(method.get("set", {}))
+                axis_names[axis_name] = method_name
+                parts.append(f"{axis_name}={method_name}")
+            trials.append(("__".join(parts), values, axis_names))
+        return trials
+
+    if mode != "grid":
+        raise ValueError(f"Unsupported sweep expansion mode: {mode}")
+
     trials = []
     for combination in itertools.product(*(methods for _, methods in selected_axes)):
         values: dict[str, Any] = {}
@@ -127,8 +149,21 @@ def write_trial_configs(sweep_path: str | Path, out_dir: str | Path | None = Non
     sweep_name = sweep_config["sweep"]["name"]
     suite_dir = ensure_dir(out_dir or Path("outputs") / "experiments" / sweep_name)
     config_dir = ensure_dir(suite_dir / "_trial_configs")
+    trial_manifest_dir = ensure_dir(suite_dir / "_trial_manifests")
     for trial in trials:
         write_yaml(config_dir / f"{trial.name}.yaml", trial.config)
+        write_json(
+            trial_manifest_dir / f"{trial.name}.json",
+            {
+                "name": trial.name,
+                "status": "pending",
+                "config": str(config_dir / f"{trial.name}.yaml"),
+                "run_dir": str(_trial_run_dir(trial)),
+                "axes": trial.axes,
+                "seed": trial.seed,
+                "fold": trial.fold,
+            },
+        )
     write_json(
         suite_dir / "sweep_manifest.json",
         {
@@ -184,6 +219,45 @@ def _write_sweep_status(suite_dir: Path, statuses: list[dict[str, Any]]) -> None
     )
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_trial_status(suite_dir: Path, status: dict[str, Any]) -> None:
+    trial_manifest_dir = ensure_dir(suite_dir / "_trial_manifests")
+    write_json(trial_manifest_dir / f"{status['trial']}.json", status)
+
+
+def _run_trial_process(trial: TrialSpec, config_path: Path, run_dir: Path, retry_failed: int) -> dict[str, Any]:
+    command = [sys.executable, "-m", "wafer_repro.train", "--config", str(config_path)]
+    attempts = []
+    final_returncode = 1
+    started_at = _now_iso()
+    for attempt in range(1, retry_failed + 2):
+        print("Running:", " ".join(command), f"(attempt {attempt})", flush=True)
+        start = time.monotonic()
+        result = subprocess.run(command)
+        elapsed = time.monotonic() - start
+        final_returncode = result.returncode
+        attempts.append({"attempt": attempt, "returncode": result.returncode, "duration_seconds": elapsed})
+        if result.returncode == 0:
+            break
+    status = "completed" if final_returncode == 0 else "failed"
+    return {
+        "trial": trial.name,
+        "status": status,
+        "returncode": final_returncode,
+        "attempts": attempts,
+        "started_at": started_at,
+        "finished_at": _now_iso(),
+        "config": str(config_path),
+        "run_dir": str(run_dir),
+        "axes": trial.axes,
+        "seed": trial.seed,
+        "fold": trial.fold,
+    }
+
+
 def run_sweep(sweep_path: str | Path, dry_run: bool = False, skip_completed: bool | None = None) -> Path:
     sweep_path = Path(sweep_path)
     sweep_config = read_yaml(sweep_path)
@@ -192,10 +266,13 @@ def run_sweep(sweep_path: str | Path, dry_run: bool = False, skip_completed: boo
     config_dir = suite_dir / "_trial_configs"
     execution_config = sweep.get("execution", {})
     continue_on_error = bool(execution_config.get("continue_on_error", False))
+    retry_failed = int(execution_config.get("retry_failed", 0))
+    max_workers = max(1, int(execution_config.get("max_workers", 1)))
     if skip_completed is None:
         skip_completed = bool(execution_config.get("skip_completed", False))
 
     statuses = []
+    runnable_trials: list[tuple[TrialSpec, Path, Path]] = []
     for trial in trials:
         config_path = config_dir / f"{trial.name}.yaml"
         run_dir = _trial_run_dir(trial)
@@ -211,34 +288,55 @@ def run_sweep(sweep_path: str | Path, dry_run: bool = False, skip_completed: boo
             }
             print(f"Skipping completed trial: {trial.name} ({run_dir})", flush=True)
             statuses.append(status)
+            _write_trial_status(suite_dir, status)
             _write_sweep_status(suite_dir, statuses)
             continue
 
-        command = [sys.executable, "-m", "wafer_repro.train", "--config", str(config_path)]
-        print("Running:", " ".join(command), flush=True)
         if dry_run:
-            statuses.append(
-                {
-                    "trial": trial.name,
-                    "status": "dry_run",
-                    "config": str(config_path),
-                    "run_dir": str(run_dir),
-                }
-            )
-            continue
-        result = subprocess.run(command)
-        status = "completed" if result.returncode == 0 else "failed"
-        statuses.append(
-            {
+            status = {
                 "trial": trial.name,
-                "status": status,
-                "returncode": result.returncode,
+                "status": "dry_run",
                 "config": str(config_path),
                 "run_dir": str(run_dir),
+                "axes": trial.axes,
+                "seed": trial.seed,
+                "fold": trial.fold,
             }
-        )
+            statuses.append(status)
+            _write_trial_status(suite_dir, status)
+            continue
+        runnable_trials.append((trial, config_path, run_dir))
+
+    if dry_run:
         _write_sweep_status(suite_dir, statuses)
-        if result.returncode != 0 and not continue_on_error:
-            raise subprocess.CalledProcessError(result.returncode, command)
+        return suite_dir
+
+    if max_workers == 1:
+        for trial, config_path, run_dir in runnable_trials:
+            status = _run_trial_process(trial, config_path, run_dir, retry_failed)
+            statuses.append(status)
+            _write_trial_status(suite_dir, status)
+            _write_sweep_status(suite_dir, statuses)
+            if status["returncode"] != 0 and not continue_on_error:
+                raise subprocess.CalledProcessError(status["returncode"], [sys.executable, "-m", "wafer_repro.train", "--config", str(config_path)])
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_trial = {
+                executor.submit(_run_trial_process, trial, config_path, run_dir, retry_failed): (trial, config_path)
+                for trial, config_path, run_dir in runnable_trials
+            }
+            failures = []
+            for future in as_completed(future_to_trial):
+                trial, config_path = future_to_trial[future]
+                status = future.result()
+                statuses.append(status)
+                _write_trial_status(suite_dir, status)
+                _write_sweep_status(suite_dir, statuses)
+                if status["returncode"] != 0:
+                    failures.append((status, config_path))
+            if failures and not continue_on_error:
+                status, config_path = failures[0]
+                raise subprocess.CalledProcessError(status["returncode"], [sys.executable, "-m", "wafer_repro.train", "--config", str(config_path)])
+
     _write_sweep_status(suite_dir, statuses)
     return suite_dir
