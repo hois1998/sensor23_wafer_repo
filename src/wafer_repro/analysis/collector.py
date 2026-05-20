@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,50 @@ def collect_run_rows(runs_dir: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _json_number(value):
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def build_suite_summary(frame: pd.DataFrame, group_keys: list[str]) -> dict[str, Any]:
+    metric_summary: dict[str, dict[str, Any]] = {}
+    for metric in METRIC_COLUMNS:
+        if metric not in frame:
+            continue
+        series = frame[metric].dropna()
+        metric_summary[metric] = {
+            "mean": _json_number(series.mean()) if not series.empty else None,
+            "std": _json_number(series.std()) if len(series) > 1 else None,
+            "min": _json_number(series.min()) if not series.empty else None,
+            "max": _json_number(series.max()) if not series.empty else None,
+            "count": int(series.count()),
+        }
+
+    warnings = []
+    seeds = sorted(str(value) for value in frame["seed"].dropna().unique()) if "seed" in frame else []
+    folds = sorted(str(value) for value in frame["fold"].dropna().unique()) if "fold" in frame else []
+    if len(seeds) <= 1:
+        warnings.append("Suite has one or zero explicit train seeds.")
+    if "split_strategy" in frame and any(frame["split_strategy"].astype(str).str.contains("kfold")) and len(folds) <= 1:
+        warnings.append("K-fold suite has one or zero explicit fold indices.")
+
+    return {
+        "run_count": int(len(frame)),
+        "completed_count": int((frame.get("status") == "completed").sum()) if "status" in frame else None,
+        "seeds": seeds,
+        "folds": folds,
+        "group_keys": group_keys,
+        "metrics": metric_summary,
+        "warnings": warnings,
+    }
+
+
 def write_comparison(runs_dir: str | Path, out: str | Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = collect_run_rows(runs_dir)
     if not rows:
@@ -84,4 +129,6 @@ def write_comparison(runs_dir: str | Path, out: str | Path) -> tuple[pd.DataFram
         .sort_values(("macro_f1", "mean"), ascending=False)
     )
     grouped.to_csv(out.with_name(out.stem + "_grouped.csv"))
+    summary = build_suite_summary(frame, group_keys)
+    (out.with_name(out.stem + "_summary.json")).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     return frame, grouped

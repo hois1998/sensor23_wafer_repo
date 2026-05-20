@@ -1,0 +1,29 @@
+schema_version: 1
+
+sweep:
+  name: wm811k_smoke_seed_fold
+  base_config: ../experiments/wm811k/000_smoke.yaml
+
+  fixed:
+    data.source.path: data/toy_LSWMD.pkl
+    train.max_epochs: 1
+    runtime.device: cpu
+
+  axes:
+    preprocessing:
+      - name: colormap
+        set:
+          data.preprocessing.channel_mode: colormap
+
+  repeats:
+    seeds: [42, 43]
+    folds: [0, 1]
+
+  expansion:
+    mode: grid
+
+  execution:
+    continue_on_error: false
+    skip_completed: false
+    max_workers: 2
+    retry_failed: 0

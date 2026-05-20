@@ -66,6 +66,7 @@
 | Phase 13 | artifact contract 구현 | 7, 9, 11, 22 |
 | Phase 14 | evaluation/inference architecture 분리 | 13, 14, 21, 24 |
 | Phase 15 | sweep execution 고도화 | 12.4, 12.5, 15 |
+| Phase 16 | multi-seed/k-fold suite 집계 | 12.4, 12.5, 14.2 |
 
 ## 후속 Phase 재정의
 
@@ -97,12 +98,12 @@
 
 ## 다음 작업
 
-다음 Phase는 Phase 16이다.
+다음 Phase는 Phase 17이다.
 
-Phase 16에서는 multi-seed/k-fold suite 자동 실행과 집계를 구현한다. 최소 구현 범위는 다음이다.
+Phase 17에서는 suite report와 leaderboard 생성을 구현한다. 최소 구현 범위는 다음이다.
 
-- sweep `repeats.seeds`와 `repeats.folds` 결과 집계 강화
-- seed/fold별 metric summary
-- mean/std/min/max/count artifact 표준화
-- fixed split/test-set 경고
-- 기존 collector와 sweep manifest 연동 강화
+- Markdown suite report
+- leaderboard table
+- per-axis method summary
+- paired axis comparison
+- warnings section
