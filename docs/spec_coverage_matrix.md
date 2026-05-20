@@ -67,6 +67,7 @@
 | Phase 14 | evaluation/inference architecture 분리 | 13, 14, 21, 24 |
 | Phase 15 | sweep execution 고도화 | 12.4, 12.5, 15 |
 | Phase 16 | multi-seed/k-fold suite 집계 | 12.4, 12.5, 14.2 |
+| Phase 17 | suite report와 leaderboard 생성 | 14.2, 14.3, 18, 20, 26 |
 
 ## 후속 Phase 재정의
 
@@ -98,12 +99,12 @@
 
 ## 다음 작업
 
-다음 Phase는 Phase 17이다.
+다음 Phase는 Phase 18이다.
 
-Phase 17에서는 suite report와 leaderboard 생성을 구현한다. 최소 구현 범위는 다음이다.
+Phase 18에서는 time-series modality 1차 구현을 진행한다. 최소 구현 범위는 다음이다.
 
-- Markdown suite report
-- leaderboard table
-- per-axis method summary
-- paired axis comparison
-- warnings section
+- toy time-series dataset generator
+- `timeseries_window` DataModule
+- forecasting task 또는 classification smoke 중 최소 1개
+- simple timeseries model
+- smoke config와 train/evaluate 검증

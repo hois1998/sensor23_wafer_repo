@@ -131,4 +131,7 @@ def write_comparison(runs_dir: str | Path, out: str | Path) -> tuple[pd.DataFram
     grouped.to_csv(out.with_name(out.stem + "_grouped.csv"))
     summary = build_suite_summary(frame, group_keys)
     (out.with_name(out.stem + "_summary.json")).write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    from wafer_repro.analysis.report import write_markdown_report
+
+    write_markdown_report(frame, grouped, summary, out.with_name(out.stem + "_report.md"))
     return frame, grouped
