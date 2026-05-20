@@ -23,7 +23,7 @@ from wafer_repro.datasets.registry import create_data_bundle
 from wafer_repro.experiment.artifacts import build_data_identity, build_preprocessing_manifest, build_split_hashes
 from wafer_repro.experiment.manifest import now_iso, write_manifest
 from wafer_repro.labels import PAPER_CLASSES
-from wafer_repro.metrics import predict_probabilities, save_evaluation
+from wafer_repro.evaluation.registry import create_evaluator
 from wafer_repro.models import create_model
 from wafer_repro.tasks.registry import create_task
 from wafer_repro.training.callbacks import (
@@ -368,8 +368,9 @@ class ExperimentRunner:
             checkpoint = torch.load(best_path, map_location="cpu")
             best_model.load_state_dict(checkpoint["model_state"])
             best_model = best_model.to(device_choice.device)
-            y_true, probs = predict_probabilities(best_model, test_loader, device_choice.device)
-            summary = save_evaluation(y_true, probs, labels, metrics_dir, prefix="test", predictions_dir=predictions_dir)
+            evaluator = create_evaluator("classification", labels=labels)
+            y_true, probs = evaluator.predict_probabilities(best_model, test_loader, device_choice.device)
+            summary = evaluator.save(y_true, probs, metrics_dir, prefix="test", predictions_dir=predictions_dir)
             summary_with_epoch = summary | {"best_epoch": int(checkpoint["epoch"])}
             write_json(run_dir / "test_summary.json", summary_with_epoch)
             print(json.dumps(summary, indent=2))

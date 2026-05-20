@@ -9,12 +9,10 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
-from PIL import Image
 
-from wafer_repro.data import load_lswmd, make_inference_tensor, sample_per_class, wafer_to_rgb_array
-from wafer_repro.datasets.image_folder.datamodule import build_image_transform
+from wafer_repro.data import wafer_to_rgb_array
+from wafer_repro.inference.inputs import load_inference_input
 from wafer_repro.labels import PAPER_CLASSES
 from wafer_repro.models import create_model
 from wafer_repro.utils import choose_device, ensure_dir
@@ -34,36 +32,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_wafer_from_args(args, config):
-    if args.npy:
-        wafer = np.load(args.npy)
-        return wafer, {"source": str(args.npy), "true_label": None}
-
-    df, wafer_col = load_lswmd(args.data)
-    df = sample_per_class(df, config.get("max_samples_per_class"), int(config.get("seed", 42)))
-    if args.original_index is not None:
-        matches = df.index[df["original_index"] == args.original_index].to_list()
-        if not matches:
-            raise ValueError(f"Original index {args.original_index} is not present in the labeled dataframe.")
-        row = df.iloc[matches[0]]
-    else:
-        if args.row_index is None:
-            raise ValueError("Provide one of --row-index, --original-index, or --npy.")
-        row = df.iloc[args.row_index]
-    return row[wafer_col], {
-        "source": "LSWMD.pkl",
-        "row_index": int(row.name),
-        "original_index": int(row["original_index"]),
-        "true_label": str(row["failure_label"]),
-    }
-
-
-def make_image_tensor(path: str, image_size: int):
-    image = Image.open(path).convert("RGB")
-    transform = build_image_transform(image_size=image_size, train=False, augmentation=False)
-    return transform(image).unsqueeze(0).to(dtype=torch.float32), image
-
-
 def main() -> None:
     args = parse_args()
     checkpoint = torch.load(args.checkpoint, map_location="cpu")
@@ -72,26 +40,8 @@ def main() -> None:
     device_choice = choose_device(args.device)
 
     data_module = config.get("data_module", "wm811k")
-    source_image = None
-    wafer_map = None
-    if data_module == "image_folder" or args.image:
-        if not args.image:
-            raise ValueError("Provide --image for image_folder checkpoints.")
-        tensor, source_image = make_image_tensor(args.image, image_size=int(config.get("image_size", 224)))
-        tensor = tensor.to(device_choice.device)
-        meta = {
-            "source": str(args.image),
-            "true_label": Path(args.image).parent.name if Path(args.image).parent else None,
-        }
-    elif data_module == "wm811k":
-        wafer_map, meta = load_wafer_from_args(args, config)
-        tensor = make_inference_tensor(
-            wafer_map,
-            image_size=int(config.get("image_size", 224)),
-            channel_mode=config.get("channel_mode", "colormap"),
-        ).to(device_choice.device)
-    else:
-        raise ValueError(f"Unsupported checkpoint data_module for infer: {data_module}")
+    inference_input = load_inference_input(args, config, data_module)
+    tensor = inference_input.tensor.to(device_choice.device)
 
     model = create_model(
         model_name=config["model"],
@@ -108,7 +58,7 @@ def main() -> None:
 
     order = probabilities.argsort()[::-1][: args.top_k]
     result = {
-        **meta,
+        **inference_input.metadata,
         "checkpoint": str(args.checkpoint),
         "model": config["model"],
         "top_k": [
@@ -122,10 +72,10 @@ def main() -> None:
         out_dir = ensure_dir(args.out_dir)
         (out_dir / "prediction.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
         fig, ax = plt.subplots(figsize=(4, 4))
-        if source_image is not None:
-            ax.imshow(source_image)
+        if inference_input.source_image is not None:
+            ax.imshow(inference_input.source_image)
         else:
-            rgb = wafer_to_rgb_array(wafer_map, config.get("channel_mode", "colormap"))
+            rgb = wafer_to_rgb_array(inference_input.wafer_map, config.get("channel_mode", "colormap"))
             ax.imshow(rgb)
         ax.axis("off")
         ax.set_title(result["top_k"][0]["label"])

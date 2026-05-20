@@ -9,8 +9,8 @@ from torch.utils.data import DataLoader
 
 from wafer_repro.data import WaferMapDataset, load_lswmd, load_records, sample_per_class
 from wafer_repro.datasets.image_folder.datamodule import ImageFolderRecordsDataset
+from wafer_repro.evaluation.registry import create_evaluator
 from wafer_repro.labels import PAPER_CLASSES, label_to_index
-from wafer_repro.metrics import predict_probabilities, save_evaluation
 from wafer_repro.models import create_model
 from wafer_repro.utils import choose_device, ensure_dir, write_json
 
@@ -81,8 +81,9 @@ def main() -> None:
     )
 
     out_dir = ensure_dir(args.out_dir or checkpoint_path.parent / "metrics")
-    y_true, probabilities = predict_probabilities(model, loader, device_choice.device)
-    summary = save_evaluation(y_true, probabilities, labels, out_dir, prefix=args.split)
+    evaluator = create_evaluator("classification", labels=labels)
+    y_true, probabilities = evaluator.predict_probabilities(model, loader, device_choice.device)
+    summary = evaluator.save(y_true, probabilities, out_dir, prefix=args.split)
     write_json(out_dir / f"{args.split}_summary.json", summary)
     print(json.dumps(summary, indent=2))
 
