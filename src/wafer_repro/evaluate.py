@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 
 import torch
+import pandas as pd
 from torch.utils.data import DataLoader
 
 from wafer_repro.data import WaferMapDataset, load_lswmd, load_records, sample_per_class
 from wafer_repro.datasets.image_folder.datamodule import ImageFolderRecordsDataset
+from wafer_repro.datasets.timeseries.datamodule import TimeSeriesRecordsDataset
 from wafer_repro.evaluation.registry import create_evaluator
 from wafer_repro.labels import PAPER_CLASSES, label_to_index
 from wafer_repro.models import create_model
@@ -69,6 +71,15 @@ def main() -> None:
             channel_mode=config.get("channel_mode", "colormap"),
             train=False,
             augmentation=False,
+        )
+    elif data_module == "timeseries_window":
+        frame = pd.read_csv(args.data or config.get("data"))
+        feature_columns = [column for column in frame.columns if str(column).startswith("x_")]
+        dataset = TimeSeriesRecordsDataset(
+            frame=frame,
+            records=records,
+            feature_columns=feature_columns,
+            label_map=label_to_index(labels),
         )
     else:
         raise ValueError(f"Unsupported checkpoint data_module for evaluate: {data_module}")

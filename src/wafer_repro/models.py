@@ -26,6 +26,7 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "mobilenet_v3_small": ModelSpec("mobilenet_v3_small", "MobileNetV3-Small", "Best trade-off model reported by the paper."),
     "cnn_wdi": ModelSpec("cnn_wdi", "CNN-WDI-style CNN", "Compact CNN approximation for the related-work comparison."),
     "small_cnn": ModelSpec("small_cnn", "Small smoke-test CNN", "Fast local sanity-check model, not part of the paper."),
+    "timeseries_cnn": ModelSpec("timeseries_cnn", "Time-series CNN", "Small 1D CNN for time-series smoke tests."),
 }
 
 PAPER_MODEL_NAMES = (
@@ -123,6 +124,27 @@ class SmallCNN(nn.Module):
         return self.net(x)
 
 
+class TimeSeriesCNN(nn.Module):
+    def __init__(self, num_classes: int = 3, dropout: float = 0.2):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(1, 16, kernel_size=5, padding=2),
+            nn.BatchNorm1d(16),
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(2),
+            nn.Conv1d(16, 32, kernel_size=5, padding=2),
+            nn.BatchNorm1d(32),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.Dropout(dropout),
+            nn.Linear(32, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
 @MODEL_REGISTRY.register("cnn_wdi")
 def _build_cnn_wdi(
     num_classes: int = len(PAPER_CLASSES),
@@ -139,6 +161,15 @@ def _build_small_cnn(
     dropout: float = 0.2,
 ) -> nn.Module:
     return SmallCNN(num_classes=num_classes, dropout=dropout)
+
+
+@MODEL_REGISTRY.register("timeseries_cnn")
+def _build_timeseries_cnn(
+    num_classes: int = 3,
+    pretrained: bool = False,
+    dropout: float = 0.2,
+) -> nn.Module:
+    return TimeSeriesCNN(num_classes=num_classes, dropout=dropout)
 
 
 def _build_torchvision_classifier(

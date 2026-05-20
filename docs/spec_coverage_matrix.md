@@ -68,6 +68,7 @@
 | Phase 15 | sweep execution 고도화 | 12.4, 12.5, 15 |
 | Phase 16 | multi-seed/k-fold suite 집계 | 12.4, 12.5, 14.2 |
 | Phase 17 | suite report와 leaderboard 생성 | 14.2, 14.3, 18, 20, 26 |
+| Phase 18 | time-series modality 1차 구현 | 9.6, 10.5, 23 |
 
 ## 후속 Phase 재정의
 
@@ -99,12 +100,12 @@
 
 ## 다음 작업
 
-다음 Phase는 Phase 18이다.
+다음 Phase는 Phase 19이다.
 
-Phase 18에서는 time-series modality 1차 구현을 진행한다. 최소 구현 범위는 다음이다.
+Phase 19에서는 tabular/image-folder 확장 hardening을 진행한다. 최소 구현 범위는 다음이다.
 
-- toy time-series dataset generator
-- `timeseries_window` DataModule
-- forecasting task 또는 classification smoke 중 최소 1개
-- simple timeseries model
-- smoke config와 train/evaluate 검증
+- image-folder predefined split 지원
+- image-folder normalization 옵션 강화
+- tabular CSV DataModule smoke path
+- tabular baseline model
+- image-folder/tabular smoke 검증

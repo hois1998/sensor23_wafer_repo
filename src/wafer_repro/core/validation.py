@@ -22,6 +22,7 @@ MODES = {"max", "min"}
 RUNTIME_DEVICES = {"auto", "cuda", "mps", "directml", "dml", "cpu"}
 WM811K_SPLITS = {"stratified_holdout", "single", "single_6_2_2", "stratified_kfold", "paper_kfold", "predefined_files", "external_test_with_train_val_split"}
 IMAGE_FOLDER_SPLITS = {"stratified_holdout", "single", "single_6_2_2"}
+TIMESERIES_SPLITS = {"stratified_holdout", "single", "single_6_2_2"}
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,8 @@ def validate_experiment_config(
         issues.append(ValidationIssue("data.split.strategy", f"WM-811K does not support split strategy {split_strategy!r}"))
     if data_module == "image_folder" and split_strategy not in IMAGE_FOLDER_SPLITS:
         issues.append(ValidationIssue("data.split.strategy", f"image_folder currently supports: {', '.join(sorted(IMAGE_FOLDER_SPLITS))}"))
+    if data_module == "timeseries_window" and split_strategy not in TIMESERIES_SPLITS:
+        issues.append(ValidationIssue("data.split.strategy", f"timeseries_window currently supports: {', '.join(sorted(TIMESERIES_SPLITS))}"))
 
     if split_strategy == "predefined_files":
         for name in ("train", "val", "test"):
@@ -222,6 +225,8 @@ def validate_experiment_config(
                 issues.append(ValidationIssue("data.source.path", "image_folder requires data.source.path or data.source.root"))
             elif not Path(root).is_dir():
                 issues.append(ValidationIssue("data.source.path", f"directory does not exist: {root}"))
+        elif data_module == "timeseries_window":
+            _validate_path_exists(issues, config, "data.source.path", kind="file")
 
     _validate_choice(issues, config, "train.checkpoint.mode", MODES, required=False)
     _validate_monitor(issues, config, "train.checkpoint.monitor", required=False)

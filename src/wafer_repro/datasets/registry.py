@@ -15,6 +15,7 @@ DATA_MODULE_REGISTRY: Registry[DataModuleBuilder] = Registry("data_module")
 def _import_builtin_data_modules() -> None:
     # Import side effects register the built-in data module builders.
     import wafer_repro.datasets.image_folder.datamodule  # noqa: F401
+    import wafer_repro.datasets.timeseries.datamodule  # noqa: F401
     import wafer_repro.datasets.wm811k.datamodule  # noqa: F401
 
 
