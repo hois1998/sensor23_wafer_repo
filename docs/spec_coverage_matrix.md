@@ -63,6 +63,7 @@
 | Phase 10 | `60a3e90` | 7.1, 15, 26 |
 | Phase 11 | 현재 문서 | 1-30 전체 추적 체계 |
 | Phase 12 | validation preflight 구현 | 6, 15, 27, 28 |
+| Phase 13 | artifact contract 구현 | 7, 9, 11, 22 |
 
 ## 후속 Phase 재정의
 
@@ -94,13 +95,12 @@
 
 ## 다음 작업
 
-다음 Phase는 Phase 13이다.
+다음 Phase는 Phase 14이다.
 
-Phase 13에서는 artifact contract를 표준화한다. 최소 구현 범위는 다음이다.
+Phase 14에서는 evaluation/inference architecture를 registry 기반으로 정리한다. 최소 구현 범위는 다음이다.
 
-- raw dataset identity 저장: path, size, mtime, optional sha256
-- split artifact hash 저장
-- preprocessing/augmentation manifest 저장
-- checkpoint contract 명문화
-- classification prediction CSV 저장
-- collector가 prediction/artifact 존재 여부를 확인하도록 확장
+- `evaluation/` 패키지 도입
+- classification evaluator를 `metrics.py`에서 분리
+- `infer.py`의 modality별 분기를 predictor/input adapter 구조로 정리
+- WM-811K와 image-folder 평가/추론 회귀 검증
+- 기존 CLI 호환성 유지

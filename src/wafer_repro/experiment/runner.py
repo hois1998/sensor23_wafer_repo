@@ -20,6 +20,7 @@ from wafer_repro.core.environment import capture_environment
 from wafer_repro.core.validation import validate_experiment_config
 from wafer_repro.data import save_records
 from wafer_repro.datasets.registry import create_data_bundle
+from wafer_repro.experiment.artifacts import build_data_identity, build_preprocessing_manifest, build_split_hashes
 from wafer_repro.experiment.manifest import now_iso, write_manifest
 from wafer_repro.labels import PAPER_CLASSES
 from wafer_repro.metrics import predict_probabilities, save_evaluation
@@ -147,6 +148,7 @@ class ExperimentRunner:
         run_dir = ensure_dir(Path(args.out_dir) / run_name)
         split_dir = ensure_dir(run_dir / "splits")
         metrics_dir = ensure_dir(run_dir / "metrics")
+        predictions_dir = ensure_dir(run_dir / "predictions")
         resolved_config = build_resolved_config(args, self.loaded_config)
         set_path(resolved_config, "runtime.run_dir", str(run_dir))
 
@@ -198,6 +200,30 @@ class ExperimentRunner:
             write_manifest(run_dir, manifest)
 
             _save_common_records(split_dir, train_base, train_records, val_records, test_records)
+            split_hashes = build_split_hashes(split_dir)
+            data_identity = build_data_identity(resolved_config)
+            preprocessing_manifest = build_preprocessing_manifest(resolved_config)
+            write_json(split_dir / "split_hashes.json", split_hashes)
+            write_json(run_dir / "data_identity.json", data_identity)
+            write_json(run_dir / "preprocessing_manifest.json", preprocessing_manifest)
+            artifact_manifest = {
+                "resolved_config": str(run_dir / "resolved_config.yaml"),
+                "source_config": str(run_dir / "source_config.yaml") if self.loaded_config else None,
+                "config_hash": str(run_dir / "config_hash.txt"),
+                "environment": str(run_dir / "environment.json"),
+                "data_summary": str(run_dir / "data_summary.json"),
+                "data_identity": str(run_dir / "data_identity.json"),
+                "preprocessing_manifest": str(run_dir / "preprocessing_manifest.json"),
+                "split_hashes": str(split_dir / "split_hashes.json"),
+                "history": str(run_dir / "history.csv"),
+                "best_checkpoint": str(run_dir / "best.pt"),
+                "last_checkpoint": str(run_dir / "last.pt"),
+                "test_predictions": str(predictions_dir / "test_predictions.csv"),
+                "test_summary": str(run_dir / "test_summary.json"),
+            }
+            write_json(run_dir / "artifact_manifest.json", artifact_manifest)
+            manifest["artifacts"] = artifact_manifest
+            write_manifest(run_dir, manifest)
 
             pin_memory = device_choice.backend == "cuda"
             train_loader = make_loader(train_ds, args.batch_size, True, args.num_workers, pin_memory)
@@ -343,7 +369,7 @@ class ExperimentRunner:
             best_model.load_state_dict(checkpoint["model_state"])
             best_model = best_model.to(device_choice.device)
             y_true, probs = predict_probabilities(best_model, test_loader, device_choice.device)
-            summary = save_evaluation(y_true, probs, labels, metrics_dir, prefix="test")
+            summary = save_evaluation(y_true, probs, labels, metrics_dir, prefix="test", predictions_dir=predictions_dir)
             summary_with_epoch = summary | {"best_epoch": int(checkpoint["epoch"])}
             write_json(run_dir / "test_summary.json", summary_with_epoch)
             print(json.dumps(summary, indent=2))

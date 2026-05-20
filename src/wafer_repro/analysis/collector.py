@@ -31,10 +31,13 @@ def collect_run_rows(runs_dir: str | Path) -> list[dict[str, Any]]:
         manifest = _read_json(run_dir / "run_manifest.json")
         config = _read_json(run_dir / "config.json")
         data_summary = _read_json(run_dir / "data_summary.json")
+        data_identity = _read_json(run_dir / "data_identity.json")
+        artifact_manifest = _read_json(run_dir / "artifact_manifest.json")
         if not summary and manifest.get("test_summary"):
             summary = manifest["test_summary"]
         if not summary:
             continue
+        predictions_path = Path(artifact_manifest.get("test_predictions", run_dir / "predictions" / "test_predictions.csv"))
         row = {
                 "run": run_dir.name,
                 "status": manifest.get("status"),
@@ -52,6 +55,11 @@ def collect_run_rows(runs_dir: str | Path) -> list[dict[str, Any]]:
                 "config_hash": manifest.get("config_hash") or config.get("config_hash"),
                 "train_records_after_augmentation": data_summary.get("train_records_after_augmentation"),
                 "test_records": data_summary.get("test_records"),
+                "data_path": data_identity.get("path"),
+                "data_size_bytes": data_identity.get("size_bytes"),
+                "has_data_identity": bool(data_identity),
+                "has_split_hashes": (run_dir / "splits" / "split_hashes.json").exists(),
+                "has_test_predictions": predictions_path.exists(),
             }
         row.update(axes_by_run.get(run_dir.name, {}))
         rows.append(row)
